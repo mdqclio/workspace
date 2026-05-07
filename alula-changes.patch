@@ -1,0 +1,765 @@
+From cfe9083300644c945b72f423cd7ec0a27cae89f0 Mon Sep 17 00:00:00 2001
+From: mdqclio <mdqclio@gmail.com>
+Date: Wed, 6 May 2026 22:45:49 +0000
+Subject: [PATCH 1/2] =?UTF-8?q?Fix:=20eliminar=20c=C3=B3digo=20de=20m?=
+ =?UTF-8?q?=C3=B3dulo=20roto=20que=20imped=C3=ADa=20cargar=20la=20app?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Se removieron llamadas a funciones inexistentes ejecutadas a nivel de
+módulo en reservas.js (calcularOcupacionGlobal, sugerirMejorCama, etc.)
+que crasheaban toda la cadena de imports e impedían el login. Se integró
+correctamente sugerirCama en updateBedsSelect y se corrigió r.camaId →
+r.cama en camas.service.js.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ js/reservas.js               | 35 ++++++-----------------------------
+ js/services/camas.service.js |  2 +-
+ 2 files changed, 7 insertions(+), 30 deletions(-)
+
+diff --git a/js/reservas.js b/js/reservas.js
+index 301b023..ba87e91 100644
+--- a/js/reservas.js
++++ b/js/reservas.js
+@@ -1,5 +1,4 @@
+ // ===================== RESERVAS =====================
+-//import { sugerirMejorCama, calcularPrecioCama } from "./services/camas.service.js";
+ import { sugerirCama } from "./services/camas.service.js";
+ import { DB } from './firebase-config.js';
+ import { today, fmtMoney, platBadge, estadoBadge, pagoBadge, showNotif, openModal, closeModal, nightsBetween } from './helpers.js';
+@@ -64,18 +63,6 @@ export function updateBedsSelect() {
+   const salida = document.getElementById('res-salida').value;
+ 
+   const sel = document.getElementById('res-cama');
+-  function autoAsignarCama() {
+-  const entrada = document.getElementById("res-entrada").value;
+-  const salida = document.getElementById("res-salida").value;
+-
+-  if (!entrada || !salida) return;
+-
+-  const cama = sugerirCama(entrada, salida, window.camas, window.reservas);
+-
+-  if (!cama) return;
+-
+-  document.getElementById("res-cama").value = cama.id;
+-}
+   if (!hab) { sel.innerHTML = '<option>Primero elegí habitación</option>'; return; }
+   const reservas = DB.get('reservas', []);
+   const beds = habBeds(hab);
+@@ -100,23 +87,13 @@ export function updateBedsSelect() {
+     }
+     return `<option value="${b.id}" ${blocked ? 'disabled' : ''}>Cama ${b.label}${motivo}</option>`;
+   }).join('');
+-}
+ 
+-// === SUGERENCIA AUTOMÁTICA ===
+-const ocupacion = calcularOcupacionGlobal(); // la creamos abajo
+-
+-const camasDisponibles = obtenerCamasDisponibles(); // adaptás a tu lógica
+-
+-const sugerida = sugerirMejorCama(camasDisponibles, ocupacion);
+-
+-if (sugerida) {
+-  const select = document.getElementById("res-cama");
+-  select.value = sugerida.id;
+-
+-  const precio = calcularPrecioCama(sugerida, ocupacion);
+-  document.getElementById("res-precio").value = precio;
+-
+-  mostrarInfoSugerida(sugerida, precio);
++  // Auto-sugerir la mejor cama disponible si hay fechas
++  if (entrada && salida) {
++    const camasData = beds.map(b => ({ id: b.id, label: b.label }));
++    const sugerida = sugerirCama(entrada, salida, camasData, reservas);
++    if (sugerida) sel.value = sugerida.id;
++  }
+ }
+ 
+ 
+diff --git a/js/services/camas.service.js b/js/services/camas.service.js
+index f7136ca..b3d3475 100644
+--- a/js/services/camas.service.js
++++ b/js/services/camas.service.js
+@@ -1,6 +1,6 @@
+ export function isCamaDisponible(camaId, entrada, salida, reservas) {
+   return !reservas.some(r => {
+-    if (r.camaId !== camaId) return false;
++    if (r.cama !== camaId) return false;
+ 
+     const e1 = new Date(entrada);
+     const s1 = new Date(salida);
+-- 
+2.53.0
+
+
+From b341537844929b2fd9148c922998deee6da291ba Mon Sep 17 00:00:00 2001
+From: mdqclio <mdqclio@gmail.com>
+Date: Wed, 6 May 2026 23:50:12 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?Feat:=20motor=20de=20camas=20con=20scoring,?=
+ =?UTF-8?q?=20pricing=20din=C3=A1mico=20y=20config=20por=20cama?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- camas.service.js: calcularScoreCama, calcularOcupacionGlobal/Habitacion,
+  calcularPrecioCama, sugerirCama — todo conectado a datos reales de Firebase
+- config.js: DEFAULT_CAMA_ATTRS, getCamasConfig, getCamaAttrs
+- config-ui.js: sección "Atributos de Camas" editable por cama (tipo, vista,
+  balcón, baño suite, premium, ruido, cercanía baño, score base)
+- reservas.js: updateBedsSelect usa scoring real; info card muestra score,
+  ocupación y precio sugerido; select de habitaciones dinámico desde config
+- index.html: info card en modal de reserva, onchange en select de cama
+- Eliminado js/servies/ (directorio con typo)
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ index.html                   |  17 ++--
+ js/app.js                    |   8 +-
+ js/config-ui.js              | 123 ++++++++++++++++++++++++++-
+ js/config.js                 |  22 +++++
+ js/reservas.js               | 158 ++++++++++++++++-------------------
+ js/services/camas.service.js |  99 +++++++++++++++++-----
+ js/servies/camas.services.js |  64 --------------
+ 7 files changed, 312 insertions(+), 179 deletions(-)
+ delete mode 100644 js/servies/camas.services.js
+
+diff --git a/index.html b/index.html
+index fff1f6e..2745413 100644
+--- a/index.html
++++ b/index.html
+@@ -460,16 +460,19 @@
+       <div class="form-group"><label>Habitación *</label>
+         <select id="res-hab" onchange="updateBedsSelect()">
+           <option value="">Seleccionar...</option>
+-          <option value="1">Habitación 1</option>
+-          <option value="2">Habitación 2</option>
+-          <option value="3">Habitación 3</option>
+-          <option value="4">Habitación 4</option>
+-          <option value="5">Habitación 5</option>
+-          <option value="6">Habitación 6</option>
+         </select>
+       </div>
+       <div class="form-group"><label>Cama *</label>
+-        <select id="res-cama"><option value="">Primero elegí fechas y habitación</option></select>
++        <select id="res-cama" onchange="updateCamaInfo()"><option value="">Primero elegí fechas y habitación</option></select>
++      </div>
++    </div>
++    <!-- Info card: cama sugerida, score y precio dinámico -->
++    <div id="res-cama-info" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;flex-direction:column;gap:6px;">
++      <div style="font-size:12px;color:var(--text2);" id="res-cama-features"></div>
++      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
++        <span style="font-size:12px;color:var(--text3);">Score: <strong id="res-cama-score" style="color:var(--accent2);">—</strong></span>
++        <span style="font-size:12px;color:var(--text3);">Ocupación hostel: <strong id="res-cama-ocupacion" style="color:var(--text);">—</strong></span>
++        <span style="font-size:12px;color:var(--text3);">💡 Precio sugerido: <strong id="res-cama-precio-sug" style="color:#60a5fa;">—</strong></span>
+       </div>
+     </div>
+     <div class="form-row">
+diff --git a/js/app.js b/js/app.js
+index 9fc7af4..481fc81 100644
+--- a/js/app.js
++++ b/js/app.js
+@@ -13,7 +13,7 @@ import {
+   doCheckout, limpiarDuplicados,
+   openCambioCama, updateCambioCamaSelect, saveCambioCama,
+   openHorario, toggleHorarioCobro, saveHorario,
+-  deleteReserva
++  deleteReserva, updateCamaInfo
+ } from './reservas.js';
+ import { renderCheckin } from './checkin.js';
+ import {
+@@ -44,7 +44,8 @@ import {
+   addMetodoPago, deleteMetodoPago,
+   addPlataforma, deletePlataforma,
+   addMoneda, deleteMoneda,
+-  addQuickReply, deleteQuickReply
++  addQuickReply, deleteQuickReply,
++  saveAllCamas, updateScorePreview
+ } from './config-ui.js';
+ import {
+   toggleChatFloat, initChatbot, clearChat, sendChat, sendQuickReply,
+@@ -82,7 +83,7 @@ Object.assign(window, {
+   doCheckout, limpiarDuplicados,
+   openCambioCama, updateCambioCamaSelect, saveCambioCama,
+   openHorario, toggleHorarioCobro, toggleHorarioCobroToggle: toggleHorarioCobro,
+-  saveHorario, deleteReserva,
++  saveHorario, deleteReserva, updateCamaInfo,
+ 
+   // Check-in
+   renderCheckin,
+@@ -126,6 +127,7 @@ Object.assign(window, {
+   addPlataforma, deletePlataforma,
+   addMoneda, deleteMoneda,
+   addQuickReply, deleteQuickReply,
++  saveAllCamas, updateScorePreview,
+ 
+   // Chatbot
+   toggleChatFloat, initChatbot, clearChat, sendChat, sendQuickReply,
+diff --git a/js/config-ui.js b/js/config-ui.js
+index e480332..2fe21fd 100644
+--- a/js/config-ui.js
++++ b/js/config-ui.js
+@@ -1,7 +1,8 @@
+ // ===================== CONFIGURACIÓN =====================
+ import { DB } from './firebase-config.js';
+ import { showNotif, openModal, closeModal } from './helpers.js';
+-import { getConfig, CONFIG_DEFAULTS, getTotalCamas, getCategorias, getCuentas, getMetodosPago, getPlataformas, getMonedas, getChatQuickReplies } from './config.js';
++import { getConfig, CONFIG_DEFAULTS, getTotalCamas, getCategorias, getCuentas, getMetodosPago, getPlataformas, getMonedas, getChatQuickReplies, getCamasConfig, getCamaAttrs, DEFAULT_CAMA_ATTRS, habBeds } from './config.js';
++import { calcularScoreCama } from './services/camas.service.js';
+ import { logAuditoria } from './auditoria.js';
+ 
+ const inp = 'background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:7px 10px;width:100%;font-size:13px;';
+@@ -18,6 +19,7 @@ export function renderConfig() {
+   const c = document.getElementById('configContent');
+   c.innerHTML = `<div style="display:grid;gap:24px;">
+     ${_sectionHostel()}
++    ${_sectionCamas()}
+     ${_sectionTemporadas()}
+     ${_sectionHorarios()}
+     ${_sectionCategorias()}
+@@ -641,3 +643,122 @@ export async function deleteQuickReply(idx) {
+   renderConfig();
+   showNotif('Quick reply eliminado');
+ }
++
++// ===== SECCIÓN CAMAS =====
++
++function _sectionCamas() {
++  const cfg = getConfig();
++  const camasCfg = getCamasConfig();
++
++  const todasCamas = [];
++  cfg.hostel.habitaciones.forEach(h => {
++    if (!h.activa || !h.camas) return;
++    habBeds(h.id).forEach(b => {
++      todasCamas.push({ ...b, habNombre: h.nombre, attrs: getCamaAttrs(b.id) });
++    });
++  });
++
++  if (!todasCamas.length) return `
++  <div class="card">
++    <div class="card-header"><h3>🛏 Atributos de Camas</h3></div>
++    <p style="padding:16px 20px;color:var(--text3)">Configurá primero las habitaciones activas.</p>
++  </div>`;
++
++  const selStyle = 'background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:12px;width:100%;';
++  const numStyle = 'background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:12px;width:56px;text-align:center;';
++
++  const rows = todasCamas.map(c => {
++    const a = c.attrs;
++    const score = calcularScoreCama(a);
++    const sid = c.id;
++    const s = (name, val, opts) => `<select id="cama-${sid}-${name}" onchange="updateScorePreview('${sid}')" style="${selStyle}">
++      ${opts.map(([v, l]) => `<option value="${v}"${v === val ? ' selected' : ''}>${l}</option>`).join('')}
++    </select>`;
++    const chk = (name, val) => `<input type="checkbox" id="cama-${sid}-${name}"${val ? ' checked' : ''} onchange="updateScorePreview('${sid}')" style="width:16px;height:16px;cursor:pointer;">`;
++
++    return `<tr style="border-bottom:1px solid var(--border);">
++      <td style="padding:8px 6px;white-space:nowrap;">
++        <strong style="font-size:13px;">Cama ${c.label}</strong>
++        <span style="display:block;font-size:11px;color:var(--text3);">${c.habNombre}</span>
++      </td>
++      <td style="padding:6px;">${s('tipo', a.tipo, [['abajo','Abajo'],['arriba','Arriba']])}</td>
++      <td style="padding:6px;">${s('vista', a.vista, [['ninguna','Ninguna'],['parcial','Parcial'],['mar','Al mar']])}</td>
++      <td style="padding:6px;text-align:center;">${chk('balcon', a.balcon)}</td>
++      <td style="padding:6px;text-align:center;">${chk('banoSuite', a.banoSuite)}</td>
++      <td style="padding:6px;text-align:center;">${chk('habitacionPremium', a.habitacionPremium)}</td>
++      <td style="padding:6px;">${s('ruido', a.ruido, [['bajo','Bajo'],['medio','Medio'],['alto','Alto']])}</td>
++      <td style="padding:6px;">${s('cercaniaBano', a.cercaniaBano, [['cerca','Cerca'],['normal','Normal'],['lejos','Lejos']])}</td>
++      <td style="padding:6px;text-align:center;">
++        <input type="number" id="cama-${sid}-scoreBase" value="${a.scoreBase}" min="-50" max="50"
++          onchange="updateScorePreview('${sid}')"
++          style="${numStyle}">
++      </td>
++      <td style="padding:6px;text-align:center;">
++        <strong id="score-preview-${sid}" style="color:var(--accent2);font-size:14px;">${score}</strong>
++      </td>
++    </tr>`;
++  }).join('');
++
++  return `
++  <div class="card">
++    <div class="card-header">
++      <h3>🛏 Atributos de Camas</h3>
++      <button class="btn btn-blue btn-sm" onclick="saveAllCamas()">Guardar cambios</button>
++    </div>
++    <div style="padding:12px 16px 16px;overflow-x:auto;">
++      <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:860px;">
++        <thead>
++          <tr style="border-bottom:1px solid var(--border);">
++            <th style="text-align:left;padding:6px;color:var(--text3);font-size:11px;font-weight:500;">CAMA</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;">TIPO</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;">VISTA</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;text-align:center;">BALCÓN</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;text-align:center;">BAÑO SUITE</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;text-align:center;">PREMIUM</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;">RUIDO</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;">CERCANÍA BAÑO</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;text-align:center;">BASE</th>
++            <th style="padding:6px;color:var(--text3);font-size:11px;font-weight:500;text-align:center;">SCORE</th>
++          </tr>
++        </thead>
++        <tbody>${rows}</tbody>
++      </table>
++      <p style="margin-top:10px;font-size:11px;color:var(--text3);">Score máximo: 115 pts. El precio por noche aumenta hasta un 50% en la cama con score máximo.</p>
++    </div>
++  </div>`;
++}
++
++function _readCamaAttrs(camaId) {
++  const get = id => document.getElementById(`cama-${camaId}-${id}`);
++  return {
++    tipo:              get('tipo')?.value              || DEFAULT_CAMA_ATTRS.tipo,
++    vista:             get('vista')?.value             || DEFAULT_CAMA_ATTRS.vista,
++    balcon:            get('balcon')?.checked          ?? DEFAULT_CAMA_ATTRS.balcon,
++    banoSuite:         get('banoSuite')?.checked       ?? DEFAULT_CAMA_ATTRS.banoSuite,
++    habitacionPremium: get('habitacionPremium')?.checked ?? DEFAULT_CAMA_ATTRS.habitacionPremium,
++    ruido:             get('ruido')?.value             || DEFAULT_CAMA_ATTRS.ruido,
++    cercaniaBano:      get('cercaniaBano')?.value      || DEFAULT_CAMA_ATTRS.cercaniaBano,
++    scoreBase:         Number(get('scoreBase')?.value) || 0,
++  };
++}
++
++export function updateScorePreview(camaId) {
++  const attrs = _readCamaAttrs(camaId);
++  const score = calcularScoreCama(attrs);
++  const el = document.getElementById(`score-preview-${camaId}`);
++  if (el) el.textContent = score;
++}
++
++export async function saveAllCamas() {
++  const cfg = getConfig();
++  const camasCfg = {};
++  cfg.hostel.habitaciones.forEach(h => {
++    if (!h.activa || !h.camas) return;
++    habBeds(h.id).forEach(b => {
++      camasCfg[b.id] = _readCamaAttrs(b.id);
++    });
++  });
++  await DB.set('camasConfig', camasCfg);
++  logAuditoria('editar', 'config', 'camas', `Atributos de ${Object.keys(camasCfg).length} camas guardados`);
++  showNotif(`✅ Atributos de ${Object.keys(camasCfg).length} camas guardados`);
++}
+diff --git a/js/config.js b/js/config.js
+index b85967e..826b5fb 100644
+--- a/js/config.js
++++ b/js/config.js
+@@ -182,3 +182,25 @@ export function allBeds() {
+   }
+   return beds;
+ }
++
++// ===== ATRIBUTOS DE CAMAS =====
++
++export const DEFAULT_CAMA_ATTRS = {
++  tipo:              'arriba',
++  vista:             'ninguna',
++  balcon:            false,
++  banoSuite:         false,
++  habitacionPremium: false,
++  ruido:             'medio',
++  cercaniaBano:      'normal',
++  scoreBase:         0,
++};
++
++export function getCamasConfig() {
++  return DB.get('camasConfig', {});
++}
++
++export function getCamaAttrs(camaId) {
++  const cfg = getCamasConfig();
++  return { ...DEFAULT_CAMA_ATTRS, ...(cfg[camaId] || {}) };
++}
+diff --git a/js/reservas.js b/js/reservas.js
+index ba87e91..113da73 100644
+--- a/js/reservas.js
++++ b/js/reservas.js
+@@ -1,8 +1,8 @@
+ // ===================== RESERVAS =====================
+-import { sugerirCama } from "./services/camas.service.js";
++import { sugerirCama, calcularScoreCama, calcularOcupacionGlobal, calcularPrecioCama } from "./services/camas.service.js";
+ import { DB } from './firebase-config.js';
+ import { today, fmtMoney, platBadge, estadoBadge, pagoBadge, showNotif, openModal, closeModal, nightsBetween } from './helpers.js';
+-import { getConfig, habBeds, camaLabel } from './config.js';
++import { getConfig, habBeds, camaLabel, getCamaAttrs, getTotalCamas, getTemporadaParaFecha } from './config.js';
+ import { logAuditoria } from './auditoria.js';
+ 
+ function getHuespedNombre(id) {
+@@ -63,7 +63,11 @@ export function updateBedsSelect() {
+   const salida = document.getElementById('res-salida').value;
+ 
+   const sel = document.getElementById('res-cama');
+-  if (!hab) { sel.innerHTML = '<option>Primero elegí habitación</option>'; return; }
++  if (!hab) {
++    sel.innerHTML = '<option>Primero elegí habitación</option>';
++    _clearCamaInfo();
++    return;
++  }
+   const reservas = DB.get('reservas', []);
+   const beds = habBeds(hab);
+   sel.innerHTML = beds.map(b => {
+@@ -88,14 +92,70 @@ export function updateBedsSelect() {
+     return `<option value="${b.id}" ${blocked ? 'disabled' : ''}>Cama ${b.label}${motivo}</option>`;
+   }).join('');
+ 
+-  // Auto-sugerir la mejor cama disponible si hay fechas
+   if (entrada && salida) {
+-    const camasData = beds.map(b => ({ id: b.id, label: b.label }));
+-    const sugerida = sugerirCama(entrada, salida, camasData, reservas);
++    // Sugerir mejor cama disponible usando score real de atributos
++    const bedsWithAttrs = beds.map(b => ({ ...b, ...getCamaAttrs(b.id) }));
++    const sugerida = sugerirCama(entrada, salida, bedsWithAttrs, reservas);
+     if (sugerida) sel.value = sugerida.id;
++    _renderCamaInfo(sel.value, entrada, salida, reservas);
++  } else {
++    _clearCamaInfo();
+   }
+ }
+ 
++// Llamado cuando el usuario cambia manualmente la cama seleccionada.
++export function updateCamaInfo() {
++  const camaId = document.getElementById('res-cama').value;
++  const entrada = document.getElementById('res-entrada').value;
++  const salida = document.getElementById('res-salida').value;
++  const reservas = DB.get('reservas', []);
++  _renderCamaInfo(camaId, entrada, salida, reservas);
++}
++
++function _renderCamaInfo(camaId, entrada, salida, reservas) {
++  const infoEl = document.getElementById('res-cama-info');
++  if (!infoEl || !camaId || !entrada || !salida) { _clearCamaInfo(); return; }
++
++  const attrs = getCamaAttrs(camaId);
++  const score = calcularScoreCama(attrs);
++  const totalCamas = getTotalCamas();
++  const ocupacion = calcularOcupacionGlobal(entrada, salida, reservas, totalCamas);
++
++  const temporadaKey = getTemporadaParaFecha(entrada);
++  const temporada = getConfig().temporadas[temporadaKey];
++  const precioSugerido = calcularPrecioCama(attrs, ocupacion, temporada.precio);
++
++  const features = [];
++  if (attrs.tipo === 'abajo')          features.push('🛏 Cama baja');
++  if (attrs.tipo === 'arriba')         features.push('⬆️ Cama alta');
++  if (attrs.vista === 'mar')           features.push('🌊 Vista al mar');
++  if (attrs.vista === 'parcial')       features.push('🪟 Vista parcial');
++  if (attrs.balcon)                    features.push('🏖️ Balcón');
++  if (attrs.banoSuite)                 features.push('🚿 Baño suite');
++  if (attrs.habitacionPremium)         features.push('⭐ Premium');
++  if (attrs.ruido === 'bajo')          features.push('🔇 Silenciosa');
++  if (attrs.ruido === 'alto')          features.push('🔊 Con ruido');
++  if (attrs.cercaniaBano === 'cerca')  features.push('🚪 Baño cerca');
++  if (attrs.cercaniaBano === 'lejos')  features.push('🚶 Baño lejos');
++
++  document.getElementById('res-cama-features').textContent =
++    features.length ? features.join(' · ') : 'Cama estándar';
++  document.getElementById('res-cama-score').textContent   = score + ' pts';
++  document.getElementById('res-cama-ocupacion').textContent = ocupacion + '%';
++  document.getElementById('res-cama-precio-sug').textContent =
++    fmtMoney(precioSugerido, temporada.moneda) + '/noche';
++
++  infoEl.style.display = 'flex';
++
++  document.getElementById('res-precio').value = precioSugerido;
++  calcTotalReserva();
++}
++
++function _clearCamaInfo() {
++  const el = document.getElementById('res-cama-info');
++  if (el) el.style.display = 'none';
++}
++
+ 
+ 
+ export function calcTotalReserva() {
+@@ -115,9 +175,15 @@ export function calcTotalReserva() {
+ 
+ export function openNuevaReserva() {
+   const huespedes = DB.get('huespedes', []);
+-  const sel = document.getElementById('res-huesped');
+-  sel.innerHTML = '<option value="">Seleccionar...</option>' +
++  document.getElementById('res-huesped').innerHTML = '<option value="">Seleccionar...</option>' +
+     huespedes.map(h => `<option value="${h.id}">${h.nombre} ${h.apellido}</option>`).join('');
++
++  const habs = getConfig().hostel.habitaciones.filter(h => h.activa && h.camas > 0);
++  document.getElementById('res-hab').innerHTML = '<option value="">Seleccionar...</option>' +
++    habs.map(h => `<option value="${h.id}">${h.nombre}</option>`).join('');
++
++  document.getElementById('res-cama').innerHTML = '<option value="">Primero elegí fechas y habitación</option>';
++  _clearCamaInfo();
+   openModal('modalReserva');
+ }
+ 
+@@ -536,79 +602,3 @@ export async function deleteReserva(id) {
+   renderReservas();
+   showNotif('Reserva eliminada');
+ }
+-// === MEJORA: Hook automático para selector de cama ===
+-document.addEventListener("DOMContentLoaded", () => {
+-  const intervalo = setInterval(() => {
+-    const selectCama = document.getElementById("res-cama");
+-
+-    if (selectCama && !selectCama.dataset.enhanced) {
+-      selectCama.dataset.enhanced = "true";
+-
+-      // Evento cambio de cama
+-      selectCama.addEventListener("change", () => {
+-        mostrarInfoCama(selectCama.value);
+-      });
+-
+-      // Crear bloque info si no existe
+-      let info = document.getElementById("camaSugeridaInfo");
+-      if (!info) {
+-        info = document.createElement("div");
+-        info.id = "camaSugeridaInfo";
+-        info.style.fontSize = "12px";
+-        info.style.marginTop = "6px";
+-        info.style.color = "var(--text3)";
+-        selectCama.parentNode.appendChild(info);
+-      }
+-
+-      clearInterval(intervalo);
+-    }
+-  }, 500);
+-});
+-
+-function mostrarInfoCama(camaId) {
+-  const info = document.getElementById("camaSugeridaInfo");
+-  if (!info) return;
+-
+-  // Ejemplo simple (después lo mejoramos con lógica real)
+-  let texto = "";
+-
+-  if (camaId.includes("mar")) {
+-    texto = "🌊 Vista al mar — +20% valor";
+-  } else if (camaId.includes("abajo")) {
+-    texto = "🛏 Cama baja — más cómoda";
+-  } else if (camaId.includes("arriba")) {
+-    texto = "⬆️ Cama alta — precio más económico";
+-  } else {
+-    texto = "Cama estándar";
+-  }
+-
+-  info.innerText = texto;
+-}
+-function calcularOcupacionGlobal() {
+-  // después lo conectás a Firebase
+-  return 65; // mock inicial
+-}
+-
+-function obtenerCamasDisponibles() {
+-  // MOCK inicial (después lo reemplazamos por Firebase real)
+-  return [
+-    { id: "1-abajo", tipo: "abajo", vistaMar: true },
+-    { id: "2-arriba", tipo: "arriba", vistaMar: false },
+-    { id: "3-abajo", tipo: "abajo", balcon: true }
+-  ];
+-}
+-
+-function mostrarInfoSugerida(cama, precio) {
+-  let info = document.getElementById("camaSugeridaInfo");
+-
+-  if (!info) {
+-    info = document.createElement("div");
+-    info.id = "camaSugeridaInfo";
+-    info.style.fontSize = "12px";
+-    info.style.marginTop = "6px";
+-    info.style.color = "var(--text3)";
+-    document.getElementById("res-cama").parentNode.appendChild(info);
+-  }
+-
+-  info.innerHTML = `🤖 Sugerida: ${cama.id} — $${precio} USD`;
+-}
+diff --git a/js/services/camas.service.js b/js/services/camas.service.js
+index b3d3475..85083c8 100644
+--- a/js/services/camas.service.js
++++ b/js/services/camas.service.js
+@@ -1,35 +1,94 @@
++// ===================== MOTOR DE CAMAS =====================
++// Scoring, pricing dinámico y sugerencia automática de camas.
++// Toda la lógica conectada a datos reales — sin mocks ni hardcodes.
++
++// Pesos configurables del scoring. Máximo teórico: 115 pts.
++const SCORE_WEIGHTS = {
++  tipo:              { abajo: 10, arriba: 0 },
++  vista:             { mar: 30, parcial: 15, ninguna: 0 },
++  balcon:            20,
++  banoSuite:         25,
++  habitacionPremium: 15,
++  ruido:             { bajo: 10, medio: 0, alto: -10 },
++  cercaniaBano:      { cerca: 5, normal: 0, lejos: -5 },
++};
++
++const SCORE_MAX = 115;
++
++// Calcula el score de una cama a partir de sus atributos.
++// cama: objeto con los atributos (tipo, vista, balcon, etc.)
++export function calcularScoreCama(cama) {
++  let score = Number(cama.scoreBase) || 0;
++  score += SCORE_WEIGHTS.tipo[cama.tipo]             ?? 0;
++  score += SCORE_WEIGHTS.vista[cama.vista]           ?? 0;
++  if (cama.balcon)            score += SCORE_WEIGHTS.balcon;
++  if (cama.banoSuite)         score += SCORE_WEIGHTS.banoSuite;
++  if (cama.habitacionPremium) score += SCORE_WEIGHTS.habitacionPremium;
++  score += SCORE_WEIGHTS.ruido[cama.ruido]           ?? 0;
++  score += SCORE_WEIGHTS.cercaniaBano[cama.cercaniaBano] ?? 0;
++  return score;
++}
++
++// Verifica si una cama está libre en el período dado.
+ export function isCamaDisponible(camaId, entrada, salida, reservas) {
+   return !reservas.some(r => {
+     if (r.cama !== camaId) return false;
+-
+-    const e1 = new Date(entrada);
+-    const s1 = new Date(salida);
+-    const e2 = new Date(r.entrada);
+-    const s2 = new Date(r.salida);
+-
++    if (r.estado === 'checkout' || r.estado === 'cancelada') return false;
++    const e1 = new Date(entrada), s1 = new Date(salida);
++    const e2 = new Date(r.entrada), s2 = new Date(r.salida);
+     return e1 < s2 && s1 > e2;
+   });
+ }
+ 
++// Ocupación global del hostel para un período (0–100).
++// reservas: array de reservas reales de Firebase.
++// totalCamas: total de camas activas en el hostel.
++export function calcularOcupacionGlobal(entrada, salida, reservas, totalCamas) {
++  if (!totalCamas) return 0;
++  const activas = reservas.filter(r =>
++    (r.estado === 'checkin' || r.estado === 'confirmada') &&
++    r.entrada < salida && r.salida > entrada
++  );
++  return Math.round((activas.length / totalCamas) * 100);
++}
++
++// Ocupación de una habitación específica para un período (0–100).
++export function calcularOcupacionHabitacion(habId, entrada, salida, reservas, camasEnHab) {
++  if (!camasEnHab) return 0;
++  const activas = reservas.filter(r =>
++    r.hab === habId &&
++    (r.estado === 'checkin' || r.estado === 'confirmada') &&
++    r.entrada < salida && r.salida > entrada
++  );
++  return Math.round((activas.length / camasEnHab) * 100);
++}
++
++// Precio dinámico de una cama.
++// factorCalidad: +0% (score=0) hasta +50% (score máximo).
++// factorOcupacion: descuento/recargo por nivel de ocupación.
++export function calcularPrecioCama(cama, ocupacion, precioBase) {
++  const score = calcularScoreCama(cama);
++  const factorCalidad = 1 + (Math.max(score, 0) / SCORE_MAX) * 0.5;
++
++  let factorOcupacion;
++  if      (ocupacion >= 85) factorOcupacion = 1.30;
++  else if (ocupacion >= 70) factorOcupacion = 1.15;
++  else if (ocupacion >= 50) factorOcupacion = 1.05;
++  else if (ocupacion <  30) factorOcupacion = 0.90;
++  else                      factorOcupacion = 1.00;
++
++  return Math.round(precioBase * factorCalidad * factorOcupacion);
++}
++
++// Sugiere la mejor cama disponible para las fechas dadas.
++// Cada elemento de `camas` debe incluir sus atributos (tipo, vista, etc.)
++// para que el scoring funcione correctamente.
+ export function sugerirCama(entrada, salida, camas, reservas) {
+   const disponibles = camas.filter(c =>
+     isCamaDisponible(c.id, entrada, salida, reservas)
+   );
+-
+   if (!disponibles.length) return null;
+-
+   return disponibles.sort((a, b) =>
+-    scoreCama(b) - scoreCama(a)
++    calcularScoreCama(b) - calcularScoreCama(a)
+   )[0];
+ }
+-
+-function scoreCama(cama) {
+-  let score = 0;
+-
+-  if (cama.vistaMar) score += 30;
+-  if (cama.balcon) score += 20;
+-  if (cama.banoSuite) score += 25;
+-  if (cama.tipo === "abajo") score += 10;
+-
+-  return score;
+-}
+diff --git a/js/servies/camas.services.js b/js/servies/camas.services.js
+deleted file mode 100644
+index d747321..0000000
+--- a/js/servies/camas.services.js
++++ /dev/null
+@@ -1,64 +0,0 @@
+-// === MOTOR DE CAMAS INTELIGENTE ===
+-
+-// Configuración base (esto después lo podés editar desde UI)
+-const CONFIG_CAMAS = {
+-  basePrice: 100, // precio base USD (referencia)
+-  factores: {
+-    vistaMar: 1.2,
+-    balcon: 1.15,
+-    banoPrivado: 1.25,
+-    camaAbajo: 1.1,
+-    camaArriba: 0.9
+-  }
+-};
+-
+-// Calcula score de una cama
+-export function calcularScoreCama(cama, ocupacion) {
+-  let score = 100;
+-
+-  if (cama.vistaMar) score += 20;
+-  if (cama.balcon) score += 15;
+-  if (cama.banoPrivado) score += 25;
+-  if (cama.tipo === "abajo") score += 10;
+-  if (cama.tipo === "arriba") score -= 5;
+-
+-  // Penalización por alta ocupación
+-  score -= ocupacion * 0.3;
+-
+-  return score;
+-}
+-
+-// Precio dinámico
+-export function calcularPrecioCama(cama, ocupacion) {
+-  let precio = CONFIG_CAMAS.basePrice;
+-
+-  if (cama.vistaMar) precio *= CONFIG_CAMAS.factores.vistaMar;
+-  if (cama.balcon) precio *= CONFIG_CAMAS.factores.balcon;
+-  if (cama.banoPrivado) precio *= CONFIG_CAMAS.factores.banoPrivado;
+-  if (cama.tipo === "abajo") precio *= CONFIG_CAMAS.factores.camaAbajo;
+-  if (cama.tipo === "arriba") precio *= CONFIG_CAMAS.factores.camaArriba;
+-
+-  // Ajuste por ocupación
+-  if (ocupacion > 80) precio *= 1.2;
+-  else if (ocupacion > 60) precio *= 1.1;
+-  else if (ocupacion < 30) precio *= 0.9;
+-
+-  return Math.round(precio);
+-}
+-
+-// Elegir mejor cama automáticamente
+-export function sugerirMejorCama(camasDisponibles, ocupacion) {
+-  let mejor = null;
+-  let mejorScore = -Infinity;
+-
+-  for (const cama of camasDisponibles) {
+-    const score = calcularScoreCama(cama, ocupacion);
+-
+-    if (score > mejorScore) {
+-      mejorScore = score;
+-      mejor = cama;
+-    }
+-  }
+-
+-  return mejor;
+-}
+-- 
+2.53.0
+
